@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skill Viewer — see what your skills are actually telling the model</title>
+<meta name="description" content="Drop in any agent SKILL.md — paste, upload a folder, or link skills.sh or GitHub — and see its positive/negative instruction ledger, conflicts, attention curve and description scorecard. Static analysis runs locally in your browser; optional LLM review with your own key.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%2322d3ee'/%3E%3Cstop offset='1' stop-color='%23a78bfa'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='14' cy='14' r='10' fill='none' stroke='url(%23g)' stroke-width='3'/%3E%3Ccircle cx='26' cy='26' r='5' fill='%23fb7185'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="bg-orbs" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#a78bfa"/></linearGradient></defs><circle cx="14" cy="14" r="10" fill="none" stroke="url(#lg)" stroke-width="3"/><circle cx="26" cy="26" r="5" fill="#fb7185"/></svg>
+    <div>
+      <h1>Skill Viewer</h1>
+      <p class="tagline">see what your skills are actually telling the model</p>
+    </div>
+  </div>
+  <div class="topbar-actions" id="topbarActions">
+    <a class="btn ghost" id="btnBack" href="#" hidden>← overview</a>
+    <button class="btn ghost" id="btnOpen" hidden>Open file</button>
+    <button class="btn ghost" id="btnPaste" hidden>Paste</button>
+    <button class="btn ghost" id="btnReset" hidden>Start over</button>
+    <input type="file" id="fileInput" accept=".md,.markdown,.txt" hidden>
+    <input type="file" id="folderInput" webkitdirectory directory multiple hidden>
+  </div>
+</header>
+
+<!-- ============ empty state ============ -->
+<main id="emptyState" class="container empty">
+  <section class="hero">
+    <div class="urlbar">
+      <input id="urlInput" type="url" placeholder="paste a skill link — skills.sh/anthropics/skills/pptx · github.com/owner/repo/tree/main/skills · raw.githubusercontent.com/…" spellcheck="false" aria-label="skill URL">
+      <button class="btn" id="btnLoadUrl">Analyze</button>
+    </div>
+    <div class="or-row"><span>or</span></div>
+    <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Drop a SKILL.md file or a folder">
+      <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+      <strong>Drop SKILL.md files or a folder</strong>
+      <span>click to browse a file · <button class="linklike" id="btnFolder">browse a folder</button> · <button class="linklike" id="btnPasteEmpty">paste contents</button></span>
+    </div>
+    <div class="samples">
+      <p class="hint">try:</p>
+      <button class="chip" data-sample="messy">demo-broken <em>— everything wrong at once</em></button>
+      <button class="chip" data-url="https://www.skills.sh/anthropics/skills/pptx">skills.sh → pptx <em>— a real public skill</em></button>
+      <button class="chip" data-url="https://github.com/101-skills/superpowers">superpowers repo <em>— 86 skills, folder view</em></button>
+    </div>
+    <div class="legend-strip" aria-hidden="true">
+      <span><i class="dot pos"></i>positive prompt</span>
+      <span><i class="dot neg"></i>negative prompt</span>
+      <span><i class="dot must"></i>hard MUST</span>
+      <span><i class="dz"></i>low-attention dead zone</span>
+    </div>
+    <p class="privacy-note">Static analysis runs 100% locally in your browser — nothing is uploaded. The optional LLM review calls OpenRouter with <em>your</em> API key.</p>
+  </section>
+</main>
+
+<!-- ============ folder / repo overview ============ -->
+<main id="multiState" class="container app" hidden>
+  <section class="card wide">
+    <div class="card-head">
+      <h2 id="multiTitle">Skills</h2>
+      <span class="muted small" id="multiSub"></span>
+    </div>
+    <div class="multi-table" id="multiTable"></div>
+  </section>
+</main>
+
+<!-- ============ single skill ============ -->
+<main id="appState" class="container app" hidden>
+  <section class="summary-row">
+    <div class="card health-card">
+      <div class="health-ring" id="healthRing"><span id="healthScore">–</span></div>
+      <div class="health-meta">
+        <div class="skill-title"><span id="skillName">skill</span><span class="grade" id="healthGrade">–</span></div>
+        <p class="muted" id="healthSub">–</p>
+        <details class="deductions"><summary>score deductions</summary><ul id="deductionList"></ul></details>
+      </div>
+    </div>
+    <div class="metric-grid" id="metricGrid"></div>
+  </section>
+
+  <div class="columns">
+    <aside class="card source-card" id="sourceCard">
+      <div class="card-head">
+        <h2>Source</h2>
+        <div class="src-tools">
+          <span class="muted small" id="srcFileLabel"></span>
+          <button class="btn tiny ghost" id="btnCopyRaw" title="copy raw markdown">copy</button>
+        </div>
+      </div>
+      <div class="line-inspector" id="lineInspector" hidden></div>
+      <div class="source-scroll" id="sourceScroll"><div id="sourceLines"></div></div>
+    </aside>
+
+    <div class="dashboard">
+      <section class="card wide">
+        <div class="card-head"><h2>Attention curve</h2><span class="muted small" id="attentionModel"></span></div>
+        <p class="card-sub">LLMs weight the <strong>first and last lines</strong> of a long instruction more than the middle (primacy / recency). Markers show where every prohibition, MUST and unpaired negative lands.</p>
+        <div class="chart attention-chart" id="attentionChart"></div>
+        <p class="muted small deadzone-note" id="deadZoneNote"></p>
+      </section>
+
+      <section class="card wide">
+        <div class="card-head">
+          <h2>Instruction ledger</h2>
+          <div class="filters" id="ledgerFilters">
+            <button class="chip small active" data-filter="all">all</button>
+            <button class="chip small" data-filter="negative">negatives</button>
+            <button class="chip small" data-filter="unpaired">unpaired ✗</button>
+            <button class="chip small" data-filter="positive">positives</button>
+            <button class="chip small" data-filter="must">musts</button>
+            <button class="chip small" data-filter="neutral">neutral</button>
+          </div>
+        </div>
+        <p class="card-sub">Every instruction classified as a <span class="t-pos">positive prompt</span>, <span class="t-neg">negative prompt</span> or <span class="t-must">hard MUST</span>. Negatives are checked for a stated replacement — <em>“don’t use excessive branding” without “use branding here” drags the banned behavior into context</em>.</p>
+        <div class="ledger" id="ledger"></div>
+      </section>
+
+      <section class="card wide" id="conflictCard" hidden>
+        <div class="card-head"><h2>Conflicts &amp; contradictions</h2></div>
+        <div id="conflictList"></div>
+      </section>
+
+      <section class="card wide">
+        <div class="card-head"><h2>Section map</h2><span class="muted small">click to jump</span></div>
+        <div class="ribbon" id="sectionRibbon"></div>
+        <div class="ribbon-legend" id="ribbonLegend"></div>
+      </section>
+
+      <section class="card wide two-col">
+        <div>
+          <div class="card-head"><h2>Description scorecard</h2><span class="muted small">the entire trigger surface</span></div>
+          <div class="chart radar-chart" id="radarChart"></div>
+        </div>
+        <div class="desc-checks">
+          <div id="descChecks"></div>
+          <div class="desc-text-wrap"><p class="muted small">description</p><blockquote class="desc-text" id="descText"></blockquote></div>
+        </div>
+      </section>
+
+      <section class="card wide">
+        <div class="card-head"><h2>Budgets</h2><span class="muted small">progressive-disclosure limits</span></div>
+        <div class="budgets" id="budgets"></div>
+      </section>
+
+      <section class="card wide">
+        <div class="card-head"><h2>Improvement ideas</h2><span class="muted small" id="ideaCount"></span></div>
+        <div class="ideas" id="ideas"></div>
+      </section>
+
+      <section class="card wide llm-card">
+        <div class="card-head"><h2>LLM review <span class="badge-soft">optional · your key</span></h2></div>
+        <p class="card-sub">Static heuristics can’t judge semantics. Run a cheap model over the skill with the review rubric — real contradictions, no-op sentences, and a suggested positive for every bare prohibition — merged into the view below.</p>
+        <div class="llm-config">
+          <select id="llmModel" aria-label="model">
+            <option value="moonshotai/kimi-k3">kimi-k3 (cheap, default)</option>
+            <option value="deepseek/deepseek-chat">deepseek-chat (cheap)</option>
+            <option value="google/gemini-2.5-flash">gemini-2.5-flash (cheap)</option>
+            <option value="custom">custom model id…</option>
+          </select>
+          <input id="llmModelCustom" type="text" placeholder="provider/model-id" hidden>
+          <input id="llmKey" type="password" placeholder="OpenRouter API key (stored in this browser only)" autocomplete="off">
+          <a class="muted small" href="https://openrouter.ai/keys" target="_blank" rel="noopener">get a key ↗</a>
+          <button class="btn" id="btnLlmRun">Run LLM review</button>
+        </div>
+        <div class="llm-row">
+          <details class="llm-manual">
+            <summary class="muted small">or use any LLM by hand: copy the prompt, paste the JSON result</summary>
+            <div class="llm-paste">
+              <button class="btn ghost" id="btnLlmPrompt">copy analysis prompt</button>
+              <textarea id="llmJson" rows="3" placeholder='{"unpaired_negatives":[{"line":12,"quote":"…","suggested_positive":"…"}], "conflicts":[…], "no_ops":[…], "duplication":[…], "strengths":["…"], "notes":"…"}'></textarea>
+              <button class="btn ghost" id="btnLlmApply">apply JSON</button>
+            </div>
+          </details>
+        </div>
+        <div id="llmStatus" class="muted small" hidden></div>
+        <div id="llmResults" hidden></div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<div class="toast" id="toast" hidden></div>
+
+<footer class="foot">
+  <span>static analysis runs locally · LLM review is BYOK via OpenRouter · attention model is an approximation of primacy/recency, not a measurement</span>
+</footer>
+
+<script src="vendor/markdown-it.min.js"></script>
+<script src="vendor/js-yaml.min.js"></script>
+<script src="vendor/echarts.min.js"></script>
+<script src="samples.js"></script>
+<script src="analyzer.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
