@@ -53,10 +53,21 @@
     const u = url.hostname.replace(/^www\./, '');
     const parts = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
 
-    // skills.sh/{owner}/{repo}/{skill} → GitHub repo
+    // skills.sh/{owner}/{repo}/{skill} → GitHub repo; falls back to the
+    // page's own github links when the guess misses (publisher namespaces
+    // do not always match the source repo).
     if ((u === 'skills.sh') && parts.length >= 2) {
       const [owner, repo, skillName] = parts;
-      return loadFromGithub(owner, repo, undefined, skillName);
+      try {
+        return await loadFromGithub(owner, repo, undefined, skillName);
+      } catch (e) {
+        const scraped = await scrapeSkillsShRepos(url.href);
+        for (const [o, r] of scraped) {
+          if (o === owner && r === repo) continue;
+          try { return await loadFromGithub(o, r, undefined, skillName); } catch (e2) { /* try next */ }
+        }
+        throw e;
+      }
     }
     if (u === 'raw.githubusercontent.com' && parts.length >= 4) {
       const [, owner, repo, ...rest] = parts;          // [refs, heads, branch] or branch directly
@@ -85,6 +96,23 @@
       return { skills: [{ name: nameFromFile(url.pathname), raw }] };
     }
     return { error: 'Link a skills.sh skill page, a GitHub repo/blob/tree, or a raw .md file.' };
+  }
+
+  // Fallback for skills.sh pages whose URL segments don't map to the source
+  // repo: read the page and collect its github.com/{owner}/{repo} links.
+  async function scrapeSkillsShRepos(pageUrl) {
+    try {
+      const res = await fetch(pageUrl);
+      if (!res.ok) return [];
+      const html = await res.text();
+      const out = [];
+      const re = /github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/g;
+      let m;
+      while ((m = re.exec(html)) && out.length < 5) {
+        if (!out.some(p => p[0] === m[1] && p[1] === m[2])) out.push([m[1], m[2]]);
+      }
+      return out;
+    } catch (e) { return []; }
   }
 
   function nameFromFile(path) {
@@ -735,19 +763,28 @@
   }
   function skillsOnlyMd(files, f) { return files.length === 1; }
 
+  // Paste can be skill markdown OR a link — route URLs through the loader.
+  function loadPasted(text) {
+    const t = text.trim();
+    if (/^(https?:\/\/|www\.)/i.test(t)) { handleUrl(t.replace(/^www\./i, 'https://')); return; }
+    if (t) loadSkill(text, 'pasted.md');
+  }
+
   function bindEvents() {
     $('fileInput').addEventListener('change', (e) => { if (e.target.files[0]) handleFiles(e.target.files); e.target.value = ''; });
     $('folderInput').addEventListener('change', (e) => { if (e.target.files.length) handleFiles(e.target.files); e.target.value = ''; });
     $('btnOpen').onclick = () => $('fileInput').click();
     $('btnFolder').onclick = () => $('folderInput').click();
     $('dropzone').onclick = (e) => { if (e.target.tagName !== 'BUTTON') $('fileInput').click(); };
-    $('btnPasteEmpty').onclick = (e) => { e.stopPropagation(); openModal('Paste SKILL.md contents', (text) => { if (text.trim()) loadSkill(text, 'pasted.md'); }); };
-    $('btnPaste').onclick = () => openModal('Paste SKILL.md contents', (text) => { if (text.trim()) loadSkill(text, 'pasted.md'); });
+    $('btnPasteEmpty').onclick = (e) => { e.stopPropagation(); openModal('Paste a skill link or SKILL.md contents', loadPasted, undefined, false, 'https://skills.sh/anthropics/skills/pptx or raw markdown…'); };
+    $('btnPaste').onclick = () => openModal('Paste a skill link or SKILL.md contents', loadPasted, undefined, false, 'https://skills.sh/anthropics/skills/pptx or raw markdown…');
 
     document.addEventListener('dragover', (e) => e.preventDefault());
     document.addEventListener('drop', (e) => {
       e.preventDefault();
-      if (e.dataTransfer.files && e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+      if (e.dataTransfer.files && e.dataTransfer.files.length) { handleFiles(e.dataTransfer.files); return; }
+      const text = e.dataTransfer.getData('text/plain').trim();
+      if (/^(https?:\/\/|www\.)/i.test(text)) handleUrl(text);
     });
 
     $('btnReset').onclick = showEmpty;
@@ -794,7 +831,7 @@
     if (savedModel) { $('llmModel').value = savedModel; $('llmModelCustom').hidden = savedModel !== 'custom'; }
   }
 
-  function openModal(title, onOk, prefill, readOnly) {
+  function openModal(title, onOk, prefill, readOnly, placeholder) {
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(4,8,16,.7);backdrop-filter:blur(6px);z-index:100;display:grid;place-items:center;padding:24px;';
     const card = document.createElement('div');
@@ -803,6 +840,7 @@
     card.innerHTML = `<h2 style="margin:0;font-size:16px">${esc(title)}</h2>`;
     const ta = document.createElement('textarea');
     ta.style.cssText = 'flex:1;min-height:260px;resize:vertical;font-family:var(--mono);font-size:12px;color:var(--text);background:rgba(7,11,20,.7);border:1px solid var(--border);border-radius:10px;padding:12px;outline:none;line-height:1.5;';
+    if (placeholder) ta.placeholder = placeholder;
     if (prefill) ta.value = prefill;
     if (readOnly) ta.readOnly = true;
     const row = document.createElement('div');
