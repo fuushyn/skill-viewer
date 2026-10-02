@@ -797,7 +797,8 @@
   };
 
   function llmPrompt(report) {
-    const skillText = report.__raw || '';
+    // Number every line: models miscount unnumbered text (measured: 15-80% of cited lines wrong without, 88-100% right with).
+    const skillText = (report.__raw || '').split('\n').map((l, i) => `${i + 1}| ${l}`).join('\n');
     return [
       'You are auditing an LLM agent skill (SKILL.md) for instruction quality.',
       'Analyze the skill below and return STRICT JSON only (no prose, no code fence) with this shape:',
@@ -809,7 +810,7 @@
       '- no_ops: instructions the model already does by default (padding).',
       '- duplication: same meaning stated in multiple places (different words, same instruction).',
       '- strengths: 2-4 short notes on what is already good.',
-      '- Line numbers are 1-based file lines.',
+      '- Line numbers: use the N| prefix on each line. The prefix is not part of any quote.',
       '',
       'SKILL.md:',
       '---8<---',

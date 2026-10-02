@@ -698,6 +698,13 @@
       if (!content) throw new Error('empty response from model');
       const applied = SkillAnalyzer.applyLlmOverlay(state.report, content, state.raw);
       if (!applied.ok) throw new Error('model did not return valid JSON — try again or pick a stronger model');
+      // Hallucination guard (from lab0-skills ci): a made-up quote is worse
+      // than no finding — drop entries whose quote is not in the file.
+      const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/ +/g, ' ');
+      const hay = norm(state.raw);
+      state.report.llm.entries = state.report.llm.entries.filter(e =>
+        (e.quote || '').split(' ↔ ').every(q => hay.includes(norm(q).trim().slice(0, 50))));
+      state.report.llm.model = llmModel();
       renderConflicts(); renderIdeas(); renderLlmResults(); renderSummary();
       status.textContent = `done · ${applied.entries.length} findings merged below`;
       toast(`LLM review merged · ${applied.entries.length} findings`);
@@ -716,12 +723,13 @@
     box.hidden = false;
     const entries = r.llm.entries;
     box.innerHTML =
+      `<p class="muted small">${entries.length} LLM entr${entries.length === 1 ? 'y' : 'ies'}${r.llm.model ? ' from ' + esc(r.llm.model) : ''} merged into conflicts + ideas${r.llm.notes ? ' · notes: ' + esc(r.llm.notes) : ''}</p>` +
       (r.llm.strengths && r.llm.strengths.length
         ? `<div class="llm-entry"><div class="kind">strengths</div><ul class="llm-strengths" style="margin:6px 0 0;padding-left:18px">${r.llm.strengths.map(s => `<li>${esc(s)}</li>`).join('')}</ul></div>`
         : '') +
       entries.map(e => `
         <div class="llm-entry">
-          <div class="kind">${e.kind.replace(/_/g, ' ')}${e.line ? ' · L' + e.line : ''}</div>
+          <div class="kind">${e.kind.replace(/_/g, ' ')}${e.line ? ' · L' + e.line : (e.lines || []).length ? ' · L' + e.lines.join(', L') : ''}</div>
           <div>${esc(trunc(e.quote || '', 160))}</div>
           ${e.suggested ? `<div class="sugg">→ ${esc(e.suggested)}</div>` : ''}
           <div class="muted small" style="margin-top:3px">${esc(e.why || '')}</div>
